@@ -1,0 +1,396 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// USERS & AUTH
+// ─────────────────────────────────────────
+model User {
+  id           String   @id @default(uuid())
+  cardId       String   @unique @map("card_id")
+  name         String
+  role         UserRole
+  passwordHash String   @map("password_hash")
+  department   String?
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  stockTransactions StockTransaction[]
+  batchRecords      BatchRecord[]
+  deviationReports  DeviationReport[]
+  soDocuments       SoDocument[]
+  poDocuments       PoDocument[]
+  systemLogs        SystemLog[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  WAREHOUSE
+  PRODUCTION
+  QA
+  SALES
+  PLANNING
+  ACCOUNTING
+}
+
+// ─────────────────────────────────────────
+// INVENTORY — Raw Material Stock
+// ─────────────────────────────────────────
+model StockLot {
+  id            String    @id @default(uuid())
+  rmNo          String    @unique @map("rm_no")        // ← RM-YYYYMMDD-XXXX (auto-gen)
+  materialCode  String    @map("material_code")        // RM-PORK-01
+  materialName  String    @map("material_name")
+  quantity      Decimal   @db.Decimal(12, 3)
+  remainingQty  Decimal   @map("remaining_qty") @db.Decimal(12, 3)
+  unit          String
+  location      String
+  status        LotStatus @default(AVAILABLE)
+  supplierCode  String?   @map("supplier_code")
+  poNo          String?   @map("po_no")
+  expiryDate    DateTime? @map("expiry_date")
+  receivedBy    String?   @map("received_by")
+  holdReason    String?   @map("hold_reason")
+  holdBy        String?   @map("hold_by")
+  holdAt        DateTime? @map("hold_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  transactions StockTransaction[]
+  batchUsages  BatchIngredient[]
+
+  @@index([rmNo])
+  @@index([materialCode])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([poNo])
+  @@map("stock_lots")
+}
+
+enum LotStatus {
+  AVAILABLE
+  HOLD
+  REWORK
+  CONSUMED
+  EXPIRED
+}
+
+model StockTransaction {
+  id              String   @id @default(uuid())
+  rmNo            String   @map("rm_no")               // ← FK to StockLot.rmNo
+  transactionType TxType   @map("transaction_type")
+  documentNo      String   @map("document_no")
+  quantity        Decimal  @db.Decimal(12, 3)
+  unit            String
+  fromLocation    String?  @map("from_location")
+  toLocation      String?  @map("to_location")
+  performedBy     String   @map("performed_by")
+  note            String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  lot  StockLot @relation(fields: [rmNo], references: [rmNo])
+  user User     @relation(fields: [performedBy], references: [id])
+
+  @@index([rmNo])
+  @@index([transactionType])
+  @@index([createdAt(sort: Desc)])
+  @@map("stock_transactions")
+}
+
+enum TxType {
+  RO           // Material Receiving
+  RM           // Requisition (เบิก FEFO)
+  FGT          // Transfer
+  SO_DISPATCH  // ตัดจ่าย Sale Order
+  RETURN_WHRM  // คืนส่วนเกินกลับ
+  REWORK       // ส่งแก้ไข
+}
+
+// ─────────────────────────────────────────
+// PRODUCTION — Batch & 4 Stages
+// ─────────────────────────────────────────
+model Batch {
+  id          String      @id @default(uuid())
+  lotNo       String      @unique @map("lot_no")       // ← LOT-YYYYMMDD-XXXX (Lot Number = Batch)
+  productCode String      @map("product_code")
+  productName String      @map("product_name")
+  recipeId    String?     @map("recipe_id")
+  status      BatchStatus @default(PREPARING)
+  startedAt   DateTime?   @map("started_at")
+  completedAt DateTime?   @map("completed_at")
+  startedBy   String      @map("started_by")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  recipe      Recipe?           @relation(fields: [recipeId], references: [id])
+  ingredients BatchIngredient[]
+  records     BatchRecord[]
+
+  @@index([lotNo])
+  @@index([status])
+  @@map("batches")
+}
+
+enum BatchStatus {
+  PREPARING
+  MIXING
+  SKEWERING
+  PACKING
+  COMPLETED
+  CANCELLED
+}
+
+model BatchIngredient {
+  id         String  @id @default(uuid())
+  batchId    String  @map("batch_id")
+  rmNo       String  @map("rm_no")                    // ← FK to StockLot.rmNo
+  plannedQty Decimal @map("planned_qty") @db.Decimal(12, 3)
+  actualQty  Decimal @map("actual_qty") @db.Decimal(12, 3)
+  unit       String
+
+  batch Batch    @relation(fields: [batchId], references: [id])
+  stock StockLot @relation(fields: [rmNo], references: [rmNo])
+
+  @@map("batch_ingredients")
+}
+
+model BatchRecord {
+  id          String     @id @default(uuid())
+  batchId     String     @map("batch_id")
+  stage       Stage
+  goodQty     Decimal    @map("good_qty") @db.Decimal(12, 3)
+  wasteQty    Decimal    @map("waste_qty") @db.Decimal(12, 3)
+  unit        String
+  blastMode   BlastMode? @map("blast_mode")
+  startTime   DateTime?  @map("start_time")
+  endTime     DateTime?  @map("end_time")
+  performedBy String     @map("performed_by")
+  note        String?
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  batch Batch @relation(fields: [batchId], references: [id])
+  user  User  @relation(fields: [performedBy], references: [id])
+
+  @@index([batchId, stage])
+  @@map("batch_records")
+}
+
+enum Stage {
+  PREPARE
+  MIX
+  SKEWER
+  PACK
+}
+
+enum BlastMode {
+  BLAST
+  NON_BLAST
+}
+
+// ─────────────────────────────────────────
+// ORDER — Sale Order
+// ─────────────────────────────────────────
+model SoDocument {
+  id          String    @id @default(uuid())
+  soNo        String    @unique @map("so_no")
+  orderType   OrderType @map("order_type")
+  status      SoStatus  @default(PENDING)
+  customerId  String?   @map("customer_id")
+  createdBy   String    @map("created_by")
+  confirmedBy String?   @map("confirmed_by")
+  confirmedAt DateTime? @map("confirmed_at")
+  paidAt      DateTime? @map("paid_at")
+  shippedAt   DateTime? @map("shipped_at")
+  note        String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  items SoItem[]
+  user  User     @relation(fields: [createdBy], references: [id])
+
+  @@map("so_documents")
+}
+
+model SoItem {
+  id           String  @id @default(uuid())
+  soId         String  @map("so_id")
+  materialCode String  @map("material_code")
+  materialName String  @map("material_name")
+  quantity     Decimal @db.Decimal(12, 3)
+  unit         String
+  rmNo         String? @map("rm_no")                  // ← FK to StockLot.rmNo
+
+  so SoDocument @relation(fields: [soId], references: [id])
+
+  @@map("so_items")
+}
+
+enum OrderType {
+  GENERAL
+  MTO
+  MTS
+}
+
+enum SoStatus {
+  PENDING
+  CONFIRMED
+  IN_PRODUCTION
+  READY
+  PAID
+  SHIPPED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────
+// PURCHASE — Purchase Order
+// ─────────────────────────────────────────
+model PoDocument {
+  id           String    @id @default(uuid())
+  poNo         String    @unique @map("po_no")
+  supplierCode String    @map("supplier_code")
+  supplierName String    @map("supplier_name")
+  status       PoStatus  @default(PENDING)
+  createdBy    String    @map("created_by")
+  expectedDate DateTime? @map("expected_date")
+  receivedAt   DateTime? @map("received_at")
+  note         String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  items PoItem[]
+  user  User     @relation(fields: [createdBy], references: [id])
+
+  @@map("po_documents")
+}
+
+model PoItem {
+  id           String  @id @default(uuid())
+  poId         String  @map("po_id")
+  materialCode String  @map("material_code")
+  materialName String  @map("material_name")
+  quantity     Decimal @db.Decimal(12, 3)
+  unit         String
+
+  po PoDocument @relation(fields: [poId], references: [id])
+
+  @@map("po_items")
+}
+
+enum PoStatus {
+  PENDING
+  APPROVED
+  SHIPPED
+  RECEIVED
+  CANCELLED
+}
+
+// ─────────────────────────────────────────
+// QA — Deviation & Hold
+// ─────────────────────────────────────────
+model DeviationReport {
+  id          String          @id @default(uuid())
+  reportNo    String          @unique @map("report_no")
+  rmNo        String          @map("rm_no")            // ← FK to StockLot.rmNo
+  description String
+  status      DeviationStatus @default(OPEN)
+  reportedBy  String          @map("reported_by")
+  resolvedBy  String?         @map("resolved_by")
+  resolvedAt  DateTime?       @map("resolved_at")
+  resolution  String?
+  reworkCount Int             @default(0) @map("rework_count")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  reporter User @relation(fields: [reportedBy], references: [id])
+
+  @@index([rmNo])
+  @@map("deviation_reports")
+}
+
+enum DeviationStatus {
+  OPEN
+  APPROVED_REWORK
+  APPROVED_MOVE
+  CLOSED
+}
+
+model SystemHold {
+  id          String    @id @default("singleton")
+  isActive    Boolean   @default(false) @map("is_active")
+  reason      String?
+  activatedBy String?   @map("activated_by")
+  activatedAt DateTime? @map("activated_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("system_hold")
+}
+
+// ─────────────────────────────────────────
+// LOGGING — Audit Trail
+// ─────────────────────────────────────────
+model SystemLog {
+  id         BigInt   @id @default(autoincrement())
+  timestamp  DateTime @default(now())
+  level      String   @db.VarChar(20)
+  action     String   @db.VarChar(100)
+  message    String?
+  requestId  String?  @map("request_id") @db.Uuid
+  userId     String?  @map("user_id")
+  userRole   String?  @map("user_role") @db.VarChar(50)
+  module     String?  @db.VarChar(50)
+  rmNo       String?  @map("rm_no") @db.VarChar(100)  // ← lotNo → rmNo
+  lotNo      String?  @map("lot_no") @db.VarChar(100) // ← Batch lot number
+  payload    Json?
+  errorInfo  Json?    @map("error_info")
+  durationMs Int?     @map("duration_ms")
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([timestamp(sort: Desc)])
+  @@index([rmNo])
+  @@index([lotNo])
+  @@index([userId])
+  @@index([level])
+  @@map("system_logs")
+}
+
+// ─────────────────────────────────────────
+// RECIPE — สูตรการผลิต
+// ─────────────────────────────────────────
+model Recipe {
+  id          String     @id @default(uuid())
+  productCode String     @unique @map("product_code")
+  productName String     @map("product_name")
+  description String?
+  yieldQty    Decimal    @map("yield_qty") @db.Decimal(12, 3)
+  yieldUnit   String     @map("yield_unit")
+  isActive    Boolean    @default(true) @map("is_active")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+
+  items   RecipeItem[]
+  batches Batch[]
+
+  @@map("recipes")
+}
+
+model RecipeItem {
+  id           String  @id @default(uuid())
+  recipeId     String  @map("recipe_id")
+  materialCode String  @map("material_code")
+  materialName String  @map("material_name")
+  quantity     Decimal @db.Decimal(12, 3)
+  unit         String
+  note         String?
+
+  recipe Recipe @relation(fields: [recipeId], references: [id])
+
+  @@map("recipe_items")
+}
