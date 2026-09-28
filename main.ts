@@ -6,7 +6,7 @@ import { AppModule } from './app.module'
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap')
-  const app = await NestFactory.create(AppModule)   // ← Express (default)
+  const app = await NestFactory.create(AppModule)
 
   app.setGlobalPrefix('api/v1')
 
@@ -16,8 +16,23 @@ async function bootstrap() {
   }))
 
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: (origin, callback) => {
+      const allowed = [
+        'http://localhost:5173',
+        'http://localhost:3000',
+        process.env.FRONTEND_URL,
+      ].filter(Boolean)
+
+      // allow Vercel preview URLs (*.vercel.app)
+      if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
+        callback(null, true)
+      } else {
+        callback(new Error(`CORS blocked: ${origin}`))
+      }
+    },
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 
   if (process.env.NODE_ENV !== 'production') {
