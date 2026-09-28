@@ -1,15 +1,13 @@
-import { Controller, Get, Post, Patch, Param, Body, Query, UseGuards } from '@nestjs/common'
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
+import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common'
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiBody } from '@nestjs/swagger'
 import { ProductionService } from './production.service'
 import { CreateBatchDto } from './dto/create-batch.dto'
 import { RecordStageDto } from './dto/record-stage.dto'
 import { AddIngredientDto } from './dto/add-ingredient.dto'
-import { JwtAuthGuard } from '../auth/jwt-auth.guard'
 
 @ApiTags('Production')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard)
-@Controller('api/v1/production')
+@Controller('production')
 export class ProductionController {
   constructor(private svc: ProductionService) {}
 
@@ -65,5 +63,16 @@ export class ProductionController {
   @ApiOperation({ summary: 'Cancel batch (return RM stock)' })
   cancel(@Param('lotNo') lotNo: string, @Body('performedBy') performedBy: string) {
     return this.svc.cancelBatch(lotNo, performedBy)
+  }
+
+  @Post('batches/:lotNo/pick-from-recipe')
+  @ApiOperation({ summary: 'Auto-pick ingredients from recipe using FEFO' })
+  @ApiParam({ name: 'lotNo', example: 'LOT-20260928-0001' })
+  @ApiBody({ schema: { properties: { performedBy: { type: 'string' } }, required: ['performedBy'] } })
+  pickFromRecipe(
+    @Param('lotNo') lotNo: string,
+    @Body('performedBy') performedBy: string,
+  ) {
+    return this.svc.pickFromRecipe(lotNo, performedBy)
   }
 }

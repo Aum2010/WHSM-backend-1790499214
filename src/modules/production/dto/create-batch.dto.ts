@@ -4,6 +4,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger'
 export class CreateBatchDto {
   @ApiProperty() @IsString() productCode: string
   @ApiProperty() @IsString() productName: string
-  @ApiPropertyOptional() @IsOptional() @IsString() recipeId?: string
+  @ApiProperty() @IsString() recipeId: string
   @ApiProperty() @IsString() startedBy: string
 }
