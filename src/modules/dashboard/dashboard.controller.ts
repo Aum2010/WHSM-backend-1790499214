@@ -7,7 +7,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard'
 @ApiTags('Dashboard')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
-@Controller('api/v1/dashboard')
+@Controller('dashboard')
 export class DashboardController {
   constructor(private svc: DashboardService) {}
 
